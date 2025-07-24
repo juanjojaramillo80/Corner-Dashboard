@@ -153,4 +153,43 @@ def mostrar_historial(historial, corners_tendencia):
 # Algunas cuotas pueden no aparecer dependiendo del partido o proveedor.
 
 # El resto del código se mantiene igual que en la versión anterior.
+# Interfaz principal
+st.title("📊 Dashboard de Córners - Over 8.5")
+st.markdown("Analiza tendencias de córners y cuotas Over 8.5 de equipos en ligas importantes.")
+
+liga_seleccionada = st.sidebar.selectbox("Selecciona una liga", list(LEAGUES.keys()))
+umbral_minimo = st.sidebar.slider("Mínimo % Over 8.5", 0, 100, 85)
+
+equipos_con_porcentaje = []
+
+for league_id in LEAGUES[liga_seleccionada]:
+    url = f"{BASE_URL}/teams"
+    params = {"league": league_id, "season": 2024}
+    resp = requests.get(url, headers=HEADERS, params=params)
+    teams = resp.json().get("response", [])
+
+    for team in teams:
+        team_id = team["team"]["id"]
+        team_name = team["team"]["name"]
+
+        promedio, ponderado, porcentaje, historial, fechas, tendencia = get_corner_stats(team_id)
+        if porcentaje >= umbral_minimo:
+            equipos_con_porcentaje.append((team_id, team_name, porcentaje, promedio, ponderado, historial, tendencia))
+
+# Ordenar y mostrar equipos
+equipos_ordenados = sorted(equipos_con_porcentaje, key=lambda x: x[2], reverse=True)
+
+if equipos_ordenados:
+    nombres = [f"{nombre} ({porc:.1f}%)" for _, nombre, porc, _, _, _, _ in equipos_ordenados]
+    index = st.selectbox("Selecciona un equipo", range(len(nombres)), format_func=lambda i: nombres[i])
+
+    _, nombre_sel, porc_sel, prom_sel, ponderado_sel, historial_sel, tendencia_sel = equipos_ordenados[index]
+    st.markdown(f"## 📌 {nombre_sel}")
+    st.metric("Promedio Córners", prom_sel)
+    st.metric("Promedio Ponderado", ponderado_sel)
+    st.metric("Porcentaje Over 8.5", f"{porc_sel}%")
+
+    mostrar_historial(historial_sel, tendencia_sel)
+else:
+    st.warning("⚠️ No hay equipos que cumplan el umbral mínimo de Over 8.5 en esta liga.")
 
