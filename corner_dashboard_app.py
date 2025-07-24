@@ -10,7 +10,7 @@ API_KEY = "27a352c146f8b04e852628573858b3f8"
 BASE_URL = "https://v3.football.api-sports.io"
 HEADERS = {"x-apisports-key": API_KEY}
 
-# Principales ligas por país (primera y segunda división donde aplique)
+# Principales ligas por país
 LEAGUES = {
     "Inglaterra": [39, 40],
     "España": [140, 141],
@@ -29,7 +29,11 @@ LEAGUES = {
     "Corea del Sur": [292]
 }
 
-# Obtener historial de córners y % de over 8.5
+def get_teams_in_league(league_id):
+    url = f"{BASE_URL}/teams"
+    params = {"league": league_id, "season": 2024}  # temporada actual
+    res = requests.get(url, headers=HEADERS, params=params)
+    return res.json().get("response", [])
 
 def get_corner_stats(team_id):
     url = f"{BASE_URL}/fixtures"
@@ -58,14 +62,14 @@ def get_corner_stats(team_id):
         odds_resp = requests.get(odds_url, headers=HEADERS, params=odds_params)
         odds_data = odds_resp.json().get("response", [])
 
-        cuota_over_85 = None
+        cuota_over_75 = None
         for bookie in odds_data:
             for bet in bookie.get("bookmakers", []):
                 for bet_type in bet.get("bets", []):
-                    if bet_type.get("name") == "Corners" or bet_type.get("name") == "Over/Under":
+                    if bet_type.get("name") in ["Corners", "Over/Under"]:
                         for value in bet_type.get("values", []):
-                            if value.get("value") == "Over 8.5":
-                                cuota_over_85 = value.get("odd")
+                            if value.get("value") == "Over 7.5":
+                                cuota_over_75 = value.get("odd")
                                 break
 
         match_corners = 0
@@ -86,13 +90,13 @@ def get_corner_stats(team_id):
         weight = (10 - i)
         weighted_sum += match_corners * weight
         match_count += 1
-        if match_corners > 8.5:
+        if match_corners > 7.5:
             over_count += 1
         fecha = fixture["fixture"]["date"][:10]
 
-        if match_corners > 8.5:
+        if match_corners > 7.5:
             color = "🟢"
-        elif match_corners >= 7:
+        elif match_corners >= 6:
             color = "🟡"
         else:
             color = "🔴"
@@ -101,19 +105,17 @@ def get_corner_stats(team_id):
             "Fecha": fecha,
             "Rival": fixture["teams"]["home"]["name"] if fixture["teams"]["away"]["id"] == team_id else fixture["teams"]["away"]["name"],
             "Córners totales": match_corners,
-            "Over 8.5": f"{color} {match_corners}",
-            "Cuota Over 8.5": cuota_over_85
+            "Over 7.5": f"{color} {match_corners}",
+            "Cuota Over 7.5": cuota_over_75
         })
         fechas.append(fecha)
         corners_tendencia.append((fecha, match_corners, color))
-        cuotas.append(cuota_over_85)
+        cuotas.append(cuota_over_75)
 
     promedio = round(total_corners / match_count, 2) if match_count else 0
     promedio_ponderado = round(weighted_sum / (sum(range(1, 11))), 2) if match_count else 0
     porcentaje_over = round((over_count / match_count) * 100, 1) if match_count else 0
     return promedio, promedio_ponderado, porcentaje_over, historial, fechas, corners_tendencia
-
-# Visualización de historial con codificación de color
 
 def mostrar_historial(historial, corners_tendencia):
     df_historial = pd.DataFrame(historial)
@@ -126,14 +128,14 @@ def mostrar_historial(historial, corners_tendencia):
         elif "🔴" in val:
             return 'background-color: #f8d7da'
         return ''
-    st.dataframe(df_historial.style.applymap(color_over, subset=["Over 8.5"]))
+    st.dataframe(df_historial.style.applymap(color_over, subset=["Over 7.5"]))
 
     st.subheader("Tendencia de Córners por Partido")
     fig, ax = plt.subplots()
     fechas, valores, colores = zip(*corners_tendencia[::-1])
     color_map = {"🟢": '#28a745', "🟡": '#ffc107', "🔴": '#dc3545'}
     barras = ax.bar(fechas, valores, color=[color_map[c] for c in colores[::-1]])
-    ax.axhline(y=8.5, color='gray', linestyle='--', linewidth=1, label='Línea Over 8.5')
+    ax.axhline(y=7.5, color='gray', linestyle='--', linewidth=1, label='Línea Over 7.5')
     ax.set_ylabel("Córners totales")
     ax.set_xlabel("Fecha")
     ax.set_title("Historial de Córners con Codificación de Color")
@@ -148,46 +150,51 @@ def mostrar_historial(historial, corners_tendencia):
     st.subheader("Tabla Detallada con Cuotas")
     st.dataframe(df_historial)
 
-# (Lo demás del código permanece igual...)
-# Recuerda ejecutar y probar localmente para asegurar que las cuotas están disponibles según la API.
-# Algunas cuotas pueden no aparecer dependiendo del partido o proveedor.
+# --- UI APP ---
 
-# El resto del código se mantiene igual que en la versión anterior.
-# Interfaz principal
-st.title("📊 Dashboard de Córners - Over 8.5")
-st.markdown("Analiza tendencias de córners y cuotas Over 8.5 de equipos en ligas importantes.")
+st.title("Dashboard de Over 7.5 Córners")
 
-liga_seleccionada = st.sidebar.selectbox("Selecciona una liga", list(LEAGUES.keys()))
-umbral_minimo = st.sidebar.slider("Mínimo % Over 8.5", 0, 100, 85)
+col1, col2 = st.columns(2)
+with col1:
+    pais = st.selectbox("Selecciona un país", list(LEAGUES.keys()))
+with col2:
+    umbral = st.slider("% mínimo de partidos Over 7.5", 0, 100, 85)
 
-equipos_con_porcentaje = []
+ligas = LEAGUES[pais]
+equipos_data = []
 
-for league_id in LEAGUES[liga_seleccionada]:
-    url = f"{BASE_URL}/teams"
-    params = {"league": league_id, "season": 2024}
-    resp = requests.get(url, headers=HEADERS, params=params)
-    teams = resp.json().get("response", [])
+with st.spinner("Cargando equipos y estadísticas..."):
+    for lid in ligas:
+        equipos = get_teams_in_league(lid)
+        for equipo in equipos:
+            team_id = equipo["team"]["id"]
+            team_name = equipo["team"]["name"]
+            try:
+                prom, prom_p, porc, historial, fechas, tendencia = get_corner_stats(team_id)
+                if porc >= umbral:
+                    equipos_data.append({
+                        "ID": team_id,
+                        "Equipo": team_name,
+                        "% Over 7.5": porc,
+                        "Promedio": prom,
+                        "Prom. Ponderado": prom_p,
+                        "Historial": historial,
+                        "Tendencia": tendencia
+                    })
+            except:
+                continue
 
-    for team in teams:
-        team_id = team["team"]["id"]
-        team_name = team["team"]["name"]
+if not equipos_data:
+    st.warning("No se encontraron equipos con el porcentaje mínimo de Over 7.5 requerido.")
+else:
+    df_resumen = pd.DataFrame(equipos_data)[["Equipo", "% Over 7.5", "Promedio", "Prom. Ponderado"]].sort_values(by="% Over 7.5", ascending=False)
+    st.subheader("Equipos que cumplen con el criterio")
+    selected_team = st.selectbox("Selecciona un equipo para ver detalle", df_resumen["Equipo"])
+    st.dataframe(df_resumen)
 
-        promedio, ponderado, porcentaje, historial, fechas, tendencia = get_corner_stats(team_id)
-        if porcentaje >= umbral_minimo:
-            equipos_con_porcentaje.append((team_id, team_name, porcentaje, promedio, ponderado, historial, tendencia))
+    equipo_detalle = next(e for e in equipos_data if e["Equipo"] == selected_team)
+    mostrar_historial(equipo_detalle["Historial"], equipo_detalle["Tendencia"])
 
-# Ordenar y mostrar equipos
-equipos_ordenados = sorted(equipos_con_porcentaje, key=lambda x: x[2], reverse=True)
-
-if equipos_ordenados:
-    nombres = [f"{nombre} ({porc:.1f}%)" for _, nombre, porc, _, _, _, _ in equipos_ordenados]
-    index = st.selectbox("Selecciona un equipo", range(len(nombres)), format_func=lambda i: nombres[i])
-
-    _, nombre_sel, porc_sel, prom_sel, ponderado_sel, historial_sel, tendencia_sel = equipos_ordenados[index]
-    st.markdown(f"## 📌 {nombre_sel}")
-    st.metric("Promedio Córners", prom_sel)
-    st.metric("Promedio Ponderado", ponderado_sel)
-    st.metric("Porcentaje Over 8.5", f"{porc_sel}%")
 
     mostrar_historial(historial_sel, tendencia_sel)
 else:
